@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 
+	"github.com/google/go-tpm-tools/attest/binding"
 	"github.com/google/go-tpm-tools/internal"
 	pb "github.com/google/go-tpm-tools/proto/attest"
 	tpmpb "github.com/google/go-tpm-tools/proto/tpm"
@@ -33,6 +34,14 @@ var cloudComputeInstanceIdentifierOID asn1.ObjectIdentifier = []int{1, 3, 6, 1, 
 type VerifyOpts struct {
 	// The nonce used when calling client.Attest
 	Nonce []byte
+	// ChallengeID is the verifier challenge resource name, when available.
+	// Together with Nonce it identifies the challenge generation recorded by
+	// BindingRegistry. It is optional when only Nonce is used.
+	ChallengeID string
+	// BindingRegistry optionally enforces the one-to-one correlation between
+	// challenge, verified machine identity, and committed verification
+	// conclusion. A nil registry preserves the library's stateless behavior.
+	BindingRegistry *binding.Registry
 	// Trusted public keys that can be used to directly verify the key used for
 	// attestation. This option should be used if you already know the AK, as
 	// it provides the highest level of assurance.
@@ -137,6 +146,18 @@ func VerifyAttestation(attestation *pb.Attestation, opts VerifyOpts) (*pb.Machin
 		return nil, fmt.Errorf("failed to parse and validate AK: %w", err)
 	}
 
+	var boundMachine binding.MachineIdentity
+	if opts.BindingRegistry != nil {
+		boundMachine, err = AttestationMachineIdentity(attestation, akPubKey, machineState)
+		if err != nil {
+			return nil, err
+		}
+		challenge := binding.Challenge{ID: opts.ChallengeID, Nonce: append([]byte(nil), opts.Nonce...)}
+		if _, err := opts.BindingRegistry.Start(challenge, boundMachine); err != nil {
+			return nil, fmt.Errorf("attestation challenge/machine correlation failed: %w", err)
+		}
+	}
+
 	var algos []tpm2.Algorithm
 	if opts.HashAlgo != tpm2.AlgUnknown {
 		if err := supportedAlgo(opts.HashAlgo); err != nil {
@@ -175,6 +196,9 @@ func VerifyAttestation(attestation *pb.Attestation, opts VerifyOpts) (*pb.Machin
 
 		proto.Merge(machineState, tpmMachineState)
 
+		if err := commitAttestationConclusion(opts, boundMachine, machineState); err != nil {
+			return nil, err
+		}
 		return machineState, nil
 	}
 
