@@ -10,9 +10,16 @@ const (
 	BuiltInInstallationRootDir = "/opt/nvidia"
 	// InstallationContainerDir is the directory where gpu drivers will be available on the workload container.
 	InstallationContainerDir = "/usr/local/nvidia"
-	// InstallerImageRef is the hardcoded image reference for cos_gpu_installer
-	InstallerImageRef = "us.gcr.io/cos-cloud/cos-gpu-installer:v2.7.11"
-	// InstallerDigest is the expected digest for cos_gpu_installer:v2.7.11
+	// InstallerRepo is the repository of the cos_gpu_installer image. The
+	// registry host is not constant: it is derived from the node's target
+	// region so that installer components are always pulled from the
+	// approved regional source (see installer_admission.go).
+	InstallerRepo = "cos-cloud/cos-gpu-installer"
+	// InstallerTag is the approved cos_gpu_installer image tag.
+	InstallerTag = "v2.7.11"
+	// InstallerDigest is the expected digest for cos_gpu_installer:v2.7.11.
+	// It is the pinned trust root for the installer image: admission fails
+	// for any other digest, regardless of the source or region.
 	InstallerDigest = "sha256:050c2a134eff464d17850474484372ee01b16a78936961fe5c07b1313bc04f3d"
 	// NvDriverVer595_58_03 is the version string for the driver
 	NvDriverVer595_58_03 = "595.58.03"

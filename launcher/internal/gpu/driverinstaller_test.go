@@ -42,7 +42,11 @@ func setupInstallerPullOpts(t *testing.T) (*containerd.RemoteContext, *recording
 func TestInstallerPullOptsUseRegistryClient(t *testing.T) {
 	rc, transport := setupInstallerPullOpts(t)
 
-	rc.Resolver.Resolve(t.Context(), InstallerImageRef)
+	imageRef, err := installerImageRefForRegion("us-west1")
+	if err != nil {
+		t.Fatalf("installerImageRefForRegion(us-west1) failed: %v", err)
+	}
+	rc.Resolver.Resolve(t.Context(), imageRef)
 
 	wantHosts := []string{"us.gcr.io"}
 	if !slices.Equal(transport.hosts, wantHosts) {
@@ -50,14 +54,22 @@ func TestInstallerPullOptsUseRegistryClient(t *testing.T) {
 	}
 }
 
-func TestInstallerImageDigestRefRequestsManifestByDigest(t *testing.T) {
+func TestAdmittedInstallerRefRequestsManifestByDigest(t *testing.T) {
 	rc, transport := setupInstallerPullOpts(t)
 
-	rc.Resolver.Resolve(t.Context(), installerImageDigestRef)
+	imageRef, err := installerImageRefForRegion("us-west1")
+	if err != nil {
+		t.Fatalf("installerImageRefForRegion(us-west1) failed: %v", err)
+	}
+	installerRef, err := admitInstallerComponents(imageRef, InstallerDigest, "us-west1")
+	if err != nil {
+		t.Fatalf("admitInstallerComponents(%q, InstallerDigest, us-west1) failed: %v", imageRef, err)
+	}
+	rc.Resolver.Resolve(t.Context(), installerRef)
 
 	wantPath := "/v2/cos-cloud/cos-gpu-installer/manifests/" + InstallerDigest
 	if len(transport.paths) == 0 || transport.paths[0] != wantPath {
-		t.Errorf("Resolver.Resolve(ctx, %q) requested paths %v, want first path %q", installerImageDigestRef, transport.paths, wantPath)
+		t.Errorf("Resolver.Resolve(ctx, %q) requested paths %v, want first path %q", installerRef, transport.paths, wantPath)
 	}
 }
 

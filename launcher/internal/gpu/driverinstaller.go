@@ -27,9 +27,6 @@ import (
 const (
 	installerContainerID = "tee-gpu-driver-installer-container"
 	installerSnapshotID  = "tee-gpu-driver-installer-snapshot"
-	// installerImageDigestRef includes InstallerDigest so that containerd
-	// rejects a different manifest before it downloads any layers.
-	installerImageDigestRef = InstallerImageRef + "@" + InstallerDigest
 )
 
 // NvidiaSmiCmdOutput defines a function type for executing an NVIDIA SMI command
@@ -79,8 +76,22 @@ func (di *DriverInstaller) InstallGPUDrivers(ctx context.Context) error {
 	}
 
 	ctx = namespaces.WithNamespace(ctx, namespaces.Default)
-	di.logger.Info(fmt.Sprintf("COS GPU installer version : %s", installerImageDigestRef))
-	image, err := di.cdClient.Pull(ctx, installerImageDigestRef, installerPullOpts(di.registryClient)...)
+	// Admit the installer components only if the component source, the
+	// pinned trust root, and the node's target region form a single
+	// admission conclusion. The source is derived from the target region so
+	// a node never pulls installer components from the wrong region, and
+	// admitInstallerComponents re-checks the triple before anything is
+	// pulled or installed into the trusted boot chain.
+	imageRef, err := installerImageRefForRegion(di.launchSpec.Region)
+	if err != nil {
+		return fmt.Errorf("failed to resolve the GPU driver installer source for region %q: %v", di.launchSpec.Region, err)
+	}
+	installerRef, err := admitInstallerComponents(imageRef, InstallerDigest, di.launchSpec.Region)
+	if err != nil {
+		return fmt.Errorf("GPU driver installer components are not admitted: %v", err)
+	}
+	di.logger.Info(fmt.Sprintf("COS GPU installer version : %s", installerRef))
+	image, err := di.cdClient.Pull(ctx, installerRef, installerPullOpts(di.registryClient)...)
 	if err != nil {
 		return fmt.Errorf("failed to pull installer image: %v", err)
 	}
@@ -160,6 +171,8 @@ func (di *DriverInstaller) InstallGPUDrivers(ctx context.Context) error {
 		return fmt.Errorf("GPU driver installation task ended with non-zero status code %d", code)
 	}
 
+	// The downloaded driver runfile is admitted under the same pinned trust
+	// root policy as the installer image: only the pinned digest is accepted.
 	if err = verifyDriverDigest(path.Join(InstallationHostDir, NvDriverVer595_58_03Runfile), NvDriverVer595_58_03Digest); err != nil {
 		return fmt.Errorf("failed to verify GPU driver digest: %v", err)
 	}
