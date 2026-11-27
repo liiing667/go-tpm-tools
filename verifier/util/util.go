@@ -21,6 +21,13 @@ type TpmKeyFetcher func(rw io.ReadWriter) (*client.Key, error)
 // PrincipalFetcher fetch ID token with specific audience from Metadata server.
 // See https://cloud.google.com/functions/docs/securing/authenticating#functions-bearer-token-example-go.
 func PrincipalFetcher(audience string, mdsClient *metadata.Client) ([][]byte, error) {
+	return PrincipalFetcherWithContext(context.Background(), audience, mdsClient)
+}
+
+// PrincipalFetcherWithContext is the context-aware form of PrincipalFetcher.
+// Command callers should pass their execution context so cancellation and
+// deadlines reach the metadata request.
+func PrincipalFetcherWithContext(ctx context.Context, audience string, mdsClient *metadata.Client) ([][]byte, error) {
 	u := url.URL{
 		Path: "instance/service-accounts/default/identity",
 		RawQuery: url.Values{
@@ -28,7 +35,7 @@ func PrincipalFetcher(audience string, mdsClient *metadata.Client) ([][]byte, er
 			"format":   {"full"},
 		}.Encode(),
 	}
-	idToken, err := mdsClient.Get(u.String())
+	idToken, err := mdsClient.GetWithContext(ctx, u.String())
 	if err != nil {
 		return nil, fmt.Errorf("failed to get principal tokens: %w", err)
 	}

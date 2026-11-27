@@ -201,13 +201,14 @@ func createAttestationKey(rw io.ReadWriter, keyType string, algo tpm2.Algorithm)
 func getInstanceInfoFromMetadata(ctx context.Context) (*attest.GCEInstanceInfo, error) {
 	var err error
 	instanceInfo := &attest.GCEInstanceInfo{}
+	mdsClient := metadata.NewClient(nil)
 
-	instanceInfo.ProjectId, err = metadata.ProjectIDWithContext(ctx)
+	instanceInfo.ProjectId, err = metadataProjectID(ctx, mdsClient)
 	if err != nil {
 		return nil, err
 	}
 
-	projectNumber, err := metadata.NumericProjectIDWithContext(ctx)
+	projectNumber, err := metadataNumericProjectID(ctx, mdsClient)
 	if err != nil {
 		return nil, err
 	}
@@ -216,12 +217,12 @@ func getInstanceInfoFromMetadata(ctx context.Context) (*attest.GCEInstanceInfo, 
 		return nil, err
 	}
 
-	instanceInfo.Zone, err = metadata.ZoneWithContext(ctx)
+	instanceInfo.Zone, err = mdsClient.ZoneWithContext(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	instanceID, err := metadata.InstanceIDWithContext(ctx)
+	instanceID, err := metadataInstanceID(ctx, mdsClient)
 	if err != nil {
 		return nil, err
 	}
@@ -230,7 +231,7 @@ func getInstanceInfoFromMetadata(ctx context.Context) (*attest.GCEInstanceInfo, 
 		return nil, err
 	}
 
-	instanceInfo.InstanceName, err = metadata.InstanceNameWithContext(ctx)
+	instanceInfo.InstanceName, err = mdsClient.InstanceNameWithContext(ctx)
 	if err != nil {
 		return nil, err
 	}

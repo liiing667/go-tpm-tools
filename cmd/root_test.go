@@ -11,6 +11,11 @@ import (
 func testTPM(tpm io.ReadWriter) func(string) (io.ReadWriteCloser, error) {
 	return func(string) (io.ReadWriteCloser, error) {
 		if tpm == nil {
+			// Compatibility bridge for older CLI tests that inject through
+			// ExternalTPM. New tests should pass their TPM to execute/executeOutput.
+			if ExternalTPM != nil {
+				return extTPMWrapper{ExternalTPM}, nil
+			}
 			return nil, errors.New("test did not provide a TPM")
 		}
 		return extTPMWrapper{tpm}, nil

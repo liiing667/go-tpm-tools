@@ -11,6 +11,11 @@ import (
 )
 
 type gotpmOptions struct {
+	tpmPath   string
+	quiet     bool
+	verbose   bool
+	stdout    io.Writer
+	runToken  tokenRunner
 	tpmOpener func(tpmPath string) (io.ReadWriteCloser, error)
 }
 
@@ -20,7 +25,24 @@ func NewGotpmCmd() *cobra.Command {
 }
 
 func newGotpmCmd(tpmOpener func(tpmPath string) (io.ReadWriteCloser, error)) *cobra.Command {
-	o := &gotpmOptions{tpmOpener: tpmOpener}
+	o := &gotpmOptions{
+		tpmOpener: tpmOpener,
+		stdout:    os.Stdout,
+		runToken:  runToken,
+	}
+	return newGotpmCommand(o)
+}
+
+func newGotpmCommand(o *gotpmOptions) *cobra.Command {
+	if o == nil {
+		o = &gotpmOptions{}
+	}
+	if o.stdout == nil {
+		o.stdout = os.Stdout
+	}
+	if o.runToken == nil {
+		o.runToken = runToken
+	}
 	root := &cobra.Command{
 		Use: "gotpm",
 		Long: `Command line tool for the go-tpm TSS
@@ -28,18 +50,19 @@ func newGotpmCmd(tpmOpener func(tpmPath string) (io.ReadWriteCloser, error)) *co
 This tool allows performing TPM2 operations from the command line.
 See the per-command documentation for more information.`,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			if quiet && verbose {
+			o.stdout = cmd.OutOrStdout()
+			if o.quiet && o.verbose {
 				return fmt.Errorf("cannot specify both --quiet and --verbose")
 			}
 			cmd.SilenceUsage = true
 			return nil
 		},
 	}
-	root.PersistentFlags().BoolVar(&quiet, "quiet", false,
+	root.PersistentFlags().BoolVar(&o.quiet, "quiet", false,
 		"print nothing if command is successful")
-	root.PersistentFlags().BoolVar(&verbose, "verbose", false,
+	root.PersistentFlags().BoolVar(&o.verbose, "verbose", false,
 		"print additional info to stdout")
-	addTPMPathFlag(root)
+	o.addTPMPathFlag(root)
 	hideHelp(root)
 	root.AddCommand(
 		newAttestCmd(o),
@@ -49,7 +72,7 @@ See the per-command documentation for more information.`,
 		newRegisterCmd(o),
 		newSealCmd(o),
 		newUnsealCmd(o),
-		tokenCmd,
+		newTokenCmd(o),
 		newVerifyCmd(),
 	)
 	return root
@@ -75,11 +98,29 @@ func debugOutput() io.Writer {
 }
 
 func (o *gotpmOptions) messageOutput() io.Writer {
-	return messageOutput()
+	if o == nil {
+		return messageOutput()
+	}
+	if o.quiet {
+		return io.Discard
+	}
+	if o.stdout != nil {
+		return o.stdout
+	}
+	return os.Stdout
 }
 
 func (o *gotpmOptions) debugOutput() io.Writer {
-	return debugOutput()
+	if o == nil {
+		return debugOutput()
+	}
+	if !o.verbose {
+		return io.Discard
+	}
+	if o.stdout != nil {
+		return o.stdout
+	}
+	return os.Stdout
 }
 
 // Default Text Marshalling options

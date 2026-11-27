@@ -489,13 +489,29 @@ func (r *ContainerRunner) refreshToken(ctx context.Context) (time.Duration, erro
 		return 0, errors.New("token is expired")
 	}
 
-	// Write to a temp file first.
-	tmpTokenPath := path.Join(launcherfile.HostTmpPath, tokenFileTmp)
-	if err = os.WriteFile(tmpTokenPath, token, 0644); err != nil {
+	// Write to a private temp file first. A unique temp file is important when
+	// multiple refreshes/commands overlap: sharing ".token.tmp" lets one call
+	// rename another call's token. The final rename is atomic.
+	tmpTokenFile, err := os.CreateTemp(launcherfile.HostTmpPath, tokenFileTmp+".*")
+	if err != nil {
+		return 0, fmt.Errorf("failed to create a tmp token file: %v", err)
+	}
+	tmpTokenPath := tmpTokenFile.Name()
+	defer os.Remove(tmpTokenPath) // No-op after a successful rename.
+	if _, err = tmpTokenFile.Write(token); err != nil {
+		_ = tmpTokenFile.Close()
 		return 0, fmt.Errorf("failed to write a tmp token file: %v", err)
 	}
+	if err = tmpTokenFile.Chmod(0644); err != nil {
+		_ = tmpTokenFile.Close()
+		return 0, fmt.Errorf("failed to set tmp token file permissions: %v", err)
+	}
+	if err = tmpTokenFile.Close(); err != nil {
+		return 0, fmt.Errorf("failed to close the tmp token file: %v", err)
+	}
 
-	// Rename the temp file to the token file (to avoid race conditions).
+	// Rename the private temp file to the token file (to avoid observed
+	// partial writes). Concurrent renames select one complete token.
 	if err = os.Rename(tmpTokenPath, path.Join(launcherfile.HostTmpPath, launcherfile.AttestationVerifierTokenFilename)); err != nil {
 		return 0, fmt.Errorf("failed to rename the token file: %v", err)
 	}

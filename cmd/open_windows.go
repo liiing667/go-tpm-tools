@@ -7,6 +7,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func (*gotpmOptions) addTPMPathFlag(_ *cobra.Command) {}
+
 func addTPMPathFlag(_ *cobra.Command) {}
 
 // There is no need for flags on Windows, as there is no concept of a TPM path.

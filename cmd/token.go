@@ -65,6 +65,11 @@ type tokenOptions struct {
 	Debug            io.Writer
 }
 
+// tokenRunner is the production function executed by the token command.
+// Tests can replace it on gotpmOptions to avoid external services and TPM
+// access while testing command isolation.
+type tokenRunner func(ctx context.Context, rwc io.ReadWriter, opts tokenOptions) ([]byte, error)
+
 // addTokenFlags registers the token flags on cmd.
 // Callers read the flag values with parseTokenFlags.
 func addTokenFlags(cmd *cobra.Command) {
@@ -160,43 +165,64 @@ func parseTokenFlags(cmd *cobra.Command) (tokenOptions, error) {
 	return opts, nil
 }
 
-// If hardware technology needs a variable length teenonce then please modify the flags description
-var tokenCmd = &cobra.Command{
-	Use:   "token",
-	Short: "Attest and fetch an OIDC token from Google Attestation Verification Service.",
-	Long: `Gather attestation report and send it to Google Attestation Verification Service for an OIDC token.
+// newTokenCmd builds an isolated token command. Every root gets its own
+// command and flag storage; no project, device, or output state is shared
+// through a package-level command singleton.
+func newTokenCmd(optionalOptions ...*gotpmOptions) *cobra.Command {
+	var o *gotpmOptions
+	if len(optionalOptions) > 0 {
+		o = optionalOptions[0]
+	}
+	if o == nil {
+		o = &gotpmOptions{tpmOpener: openImpl, stdout: os.Stdout, runToken: runToken}
+	}
+	if o.stdout == nil {
+		o.stdout = os.Stdout
+	}
+	if o.runToken == nil {
+		o.runToken = runToken
+	}
+
+	cmd := &cobra.Command{
+		Use:   "token",
+		Short: "Attest and fetch an OIDC token from Google Attestation Verification Service.",
+		Long: `Gather attestation report and send it to Google Attestation Verification Service for an OIDC token.
 The OIDC token includes claims regarding the GCE VM, which is verified by Attestation Verification Service. Note that Confidential Computing API needs to be enabled for your account to access Google Attestation Verification Service https://console.cloud.google.com/apis/api/confidentialcomputing.googleapis.com.
 --algo flag overrides the public key algorithm for the GCE TPM attestation key. If not provided then by default rsa is used.
 `,
-	Args: cobra.NoArgs,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		_ = args
-		opts, err := parseTokenFlags(cmd)
-		if err != nil {
-			return err
-		}
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_ = args
+			opts, err := parseTokenFlags(cmd)
+			if err != nil {
+				return err
+			}
 
-		rwc, err := openTPM()
-		if err != nil {
-			return err
-		}
-		defer rwc.Close()
+			rwc, err := o.openTPM()
+			if err != nil {
+				return err
+			}
+			defer rwc.Close()
 
-		opts.Debug = debugOutput()
-		token, err := runToken(cmd.Context(), rwc, opts)
-		if err != nil {
-			return err
-		}
+			o.stdout = cmd.OutOrStdout()
+			opts.Debug = o.debugOutput()
+			token, err := o.runToken(cmd.Context(), rwc, opts)
+			if err != nil {
+				return err
+			}
 
-		if opts.OutputPath == "" {
-			fmt.Fprintf(messageOutput(), "%s\n", token)
+			if opts.OutputPath == "" {
+				fmt.Fprintf(o.messageOutput(), "%s\n", token)
+				return nil
+			}
+			if err := writeTokenFile(opts.OutputPath, token); err != nil {
+				return fmt.Errorf("failed to write token: %w", err)
+			}
 			return nil
-		}
-		if err := os.WriteFile(opts.OutputPath, token, 0644); err != nil {
-			return fmt.Errorf("failed to write token: %w", err)
-		}
-		return nil
-	},
+		},
+	}
+	addTokenFlags(cmd)
+	return cmd
 }
 
 // runToken retrieves an OIDC claims token from the verification service using the provided TPM.
@@ -224,12 +250,12 @@ func runToken(ctx context.Context, rwc io.ReadWriter, opts tokenOptions) ([]byte
 
 	fmt.Fprintf(debug, "Attestation Address is set to %s\n", opts.VerifierEndpoint)
 
-	region, err := util.GetRegion(opts.MDSClient)
+	region, err := metadataRegion(ctx, opts.MDSClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch Region from MDS, the tool is probably not running in a GCE VM: %w", err)
 	}
 
-	projectID, err := opts.MDSClient.ProjectIDWithContext(ctx)
+	projectID, err := metadataProjectID(ctx, opts.MDSClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to retrieve ProjectID from MDS: %w", err)
 	}
@@ -273,7 +299,7 @@ func runToken(ctx context.Context, rwc io.ReadWriter, opts tokenOptions) ([]byte
 		return nil, err
 	}
 
-	principalTokens, err := util.PrincipalFetcher(challenge.Name, opts.MDSClient)
+	principalTokens, err := util.PrincipalFetcherWithContext(ctx, challenge.Name, opts.MDSClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get principal tokens: %w", err)
 	}
@@ -316,12 +342,12 @@ func runToken(ctx context.Context, rwc io.ReadWriter, opts tokenOptions) ([]byte
 				return nil, fmt.Errorf("failed to fetch zone from MDS: %w", err)
 			}
 
-			projectNumber, err := opts.MDSClient.NumericProjectIDWithContext(ctx)
+			projectNumber, err := metadataNumericProjectID(ctx, opts.MDSClient)
 			if err != nil {
 				return nil, fmt.Errorf("failed to retrieve project number from MDS: %w", err)
 			}
 
-			instanceID, err := opts.MDSClient.InstanceIDWithContext(ctx)
+			instanceID, err := metadataInstanceID(ctx, opts.MDSClient)
 			if err != nil {
 				return nil, fmt.Errorf("failed to retrieve instance ID from MDS: %w", err)
 			}
@@ -392,10 +418,4 @@ func runToken(ctx context.Context, rwc io.ReadWriter, opts tokenOptions) ([]byte
 
 	fmt.Fprintf(debug, "%s\nNote: these Claims are for debugging purpose and not verified\n", claimsString)
 	return token, nil
-}
-
-func init() {
-	addTokenFlags(tokenCmd)
-	// TODO: Add TEE hardware OIDC token generation
-	// addTeeNonceflag(tokenCmd)
 }

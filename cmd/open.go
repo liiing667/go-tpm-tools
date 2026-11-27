@@ -16,9 +16,9 @@ import (
 // ExternalTPM can have a TPM simulator or a real TPM.
 var ExternalTPM io.ReadWriter
 
-// TODO: Move tpmPath into gotpmOptions after every command is built by a
-// constructor. Until then, commands that are package-level variables read it
-// through openTPM.
+// tpmPath backs the deprecated package-level flag/openTPM helpers. Commands
+// built by constructors use gotpmOptions.tpmPath instead, so separate command
+// trees do not share a device path.
 var tpmPath string
 
 // extTPMWrapper is designed to wrap the ExternalTPM to provide some overriding
@@ -50,7 +50,15 @@ func openTPM() (io.ReadWriteCloser, error) {
 }
 
 func (o *gotpmOptions) openTPM() (io.ReadWriteCloser, error) {
-	rwc, err := o.tpmOpener(tpmPath)
+	tpmPath := ""
+	if o != nil {
+		tpmPath = o.tpmPath
+	}
+	opener := openImpl
+	if o != nil && o.tpmOpener != nil {
+		opener = o.tpmOpener
+	}
+	rwc, err := opener(tpmPath)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to TPM: %w", err)
 	}
